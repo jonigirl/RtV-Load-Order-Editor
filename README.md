@@ -27,10 +27,11 @@ Three ways to run it, pick whichever suits you:
   ```
 - **Build your own exe** — see [Build](#build) below.
 
-On first launch the app asks for your `mods` folder (e.g.
-`C:\Program Files (x86)\Steam\steamapps\common\Road to Vostok\mods`). The
-choice is saved to `app_settings.json` — you won't be asked again unless the
-path becomes invalid.
+On first launch the app tries to locate the `mods` folder automatically via
+Steam's library data (checks all configured Steam library paths, so
+multi-drive setups are covered). If it can't find the game it falls back to
+a folder picker. Either way the path is saved and you won't be asked again
+unless it becomes invalid.
 
 Typical flow: **Refresh** to scan → **Analyze** to get a recommended order →
 adjust enabled state / priority as needed → **Save** to write
@@ -78,6 +79,10 @@ are dropped automatically on load. Click Save to persist the cleaned cfg.
    in steps of 5 to mods without a declared priority. Mods that declare
    `priority=N` in their `mod.txt` are locked at that value.
 4. **Edit** — manually adjust enabled state, priority value, or order.
+   Right-click any mod row to **lock** its priority — locked mods keep their
+   current value when Analyze reruns (same behaviour as mods with a declared
+   `priority=` in `mod.txt`). Right-click again to unlock. Lock state is saved
+   to `app_settings.json`.
 5. **Missing Update Links** — lists mods whose `mod.txt` has no
    `[updates]`/`modworkshop=<id>` block (needed for the in-game loader's
    update check). Paste the mod's ModWorkshop URL per row; the numeric ID is

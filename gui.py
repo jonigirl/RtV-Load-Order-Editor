@@ -3,15 +3,17 @@ from __future__ import annotations
 
 import shutil
 import tkinter as tk
+from collections import Counter, defaultdict
 from pathlib import Path
 from tkinter import messagebox
 
 import customtkinter as ctk
 
-from analyzer import PRIORITY_START, PRIORITY_STEP, AnalysisResult, analyze
+from analyzer import MAX_PRIORITY, PRIORITY_START, PRIORITY_STEP, AnalysisResult, analyze
 from config_io import ModConfig, read_config, sync_with_mods, write_config
 from mod_patcher import extract_modworkshop_id, patch_mod_archive
-from paths import MOD_CONFIG_FILE, get_mods_folder, verify_mod_config_exists
+from paths import (MOD_CONFIG_FILE, get_mods_folder, load_manual_locks,
+                   save_manual_locks, verify_mod_config_exists)
 from vmz_scanner import ModInfo, scan_mods_folder
 
 ctk.set_appearance_mode("dark")
@@ -37,6 +39,9 @@ COLOR_TEAL        = "#0d9488"  # teal for rename .zip → .vmz
 COLOR_TEAL_HV     = "#14b8a6"
 COLOR_PURPLE      = "#7c3aed"  # purple for missing updates
 COLOR_PURPLE_HV   = "#8b4dff"
+COLOR_DUPE        = "#c94040"  # red — duplicate priority warning
+COLOR_DRAG        = "#1f6feb"  # blue border — row being dragged
+COLOR_DROP        = "#2d8f47"  # green border — drag drop target
 
 # ── Fonts ──────────────────────────────────────────────────────────────────
 FONT_TITLE   = ("Segoe UI", 18, "bold")
@@ -44,6 +49,8 @@ FONT_SECTION = ("Segoe UI", 13, "bold")
 FONT_BODY    = ("Segoe UI", 12)
 FONT_SMALL   = ("Segoe UI", 11)
 FONT_MONO    = ("Consolas", 11)
+
+_INTERACTIVE = (ctk.CTkCheckBox, ctk.CTkButton, ctk.CTkEntry)
 
 
 class ModRow(ctk.CTkFrame):
@@ -60,6 +67,8 @@ class ModRow(ctk.CTkFrame):
         suggest_disable: bool,
         on_change,
         on_move,
+        can_toggle_lock: bool = False,
+        on_toggle_lock=None,
     ):
         super().__init__(
             master,
@@ -70,10 +79,14 @@ class ModRow(ctk.CTkFrame):
             height=46,
         )
         self.cfg_key = cfg_key
+        self._display_name = display_name
         self.locked = locked
         self.suggest_disable = suggest_disable
         self.on_change = on_change
         self.on_move = on_move
+        self._can_toggle_lock = can_toggle_lock
+        self._on_toggle_lock = on_toggle_lock
+        self._dupe = False
 
         if not enabled:
             name_color = COLOR_TEXT_DIM
@@ -117,6 +130,7 @@ class ModRow(ctk.CTkFrame):
         self.priority_entry.grid(row=0, column=3, padx=(8, 4), pady=8)
         self.priority_entry.bind("<FocusOut>", lambda e: self._priority_changed())
         self.priority_entry.bind("<Return>", lambda e: self._priority_changed())
+        self._entry_default_border = self.priority_entry.cget("border_color")
 
         self.up_btn = ctk.CTkButton(
             self, text="▲", width=30, height=30,
@@ -140,11 +154,75 @@ class ModRow(ctk.CTkFrame):
             w.bind("<Enter>", self._on_hover_in)
             w.bind("<Leave>", self._on_hover_out)
 
+        if can_toggle_lock:
+            for w in (self, self.label, self.subtitle):
+                w.bind("<Button-3>", self._show_context_menu, add="+")
+
     def _on_hover_in(self, _):
         self.configure(fg_color=COLOR_CARD_HOVER)
 
     def _on_hover_out(self, _):
         self.configure(fg_color=COLOR_CARD)
+
+    def _show_context_menu(self, event):
+        root = self.winfo_toplevel()
+
+        popup = tk.Toplevel(root)
+        popup.overrideredirect(True)
+        popup.attributes("-topmost", True)
+        popup.configure(bg=COLOR_CARD[1])
+
+        frame = ctk.CTkFrame(
+            popup, fg_color=COLOR_CARD[1], corner_radius=8,
+            border_width=1, border_color=COLOR_BORDER[1],
+        )
+        frame.pack(padx=0, pady=0)
+
+        icon = "🔓  " if self.locked else "🔒  "
+        action = "Unlock priority" if self.locked else "Lock priority"
+
+        def _dismiss():
+            try:
+                popup.grab_release()
+                popup.destroy()
+            except tk.TclError:
+                pass
+
+        def _run():
+            _dismiss()
+            self._on_toggle_lock()
+
+        ctk.CTkButton(
+            frame, text=f"{icon}{action}", anchor="center",
+            fg_color="transparent",
+            hover_color=COLOR_CARD_HOVER[1],
+            text_color=COLOR_TEXT[1],
+            corner_radius=6,
+            height=34, width=0,
+            font=FONT_BODY,
+            command=_run,
+        ).pack(padx=4, pady=4)
+
+        popup.update_idletasks()
+        popup.geometry(f"+{event.x_root}+{event.y_root}")
+        popup.lift()
+        popup.focus_force()
+        popup.grab_set()
+        popup.bind("<Button-1>", lambda e: _dismiss() if e.widget is popup else None)
+        popup.bind("<Escape>", lambda e: _dismiss())
+
+    def update_lock_state(self, locked: bool):
+        self.locked = locked
+        if not self.enabled_var.get():
+            name_color = COLOR_TEXT_DIM
+        elif self.suggest_disable:
+            name_color = COLOR_WARNING
+        elif locked:
+            name_color = COLOR_LOCK
+        else:
+            name_color = COLOR_TEXT
+        prefix = "🔒 " if locked else ("⚠ " if self.suggest_disable else "")
+        self.label.configure(text=f"{prefix}{self._display_name}", text_color=name_color)
 
     def _enabled_changed(self):
         self.on_change(self.cfg_key, "enabled", self.enabled_var.get())
@@ -153,8 +231,9 @@ class ModRow(ctk.CTkFrame):
         try:
             v = int(self.priority_var.get())
         except ValueError:
-            self.priority_var.set("0")
             v = 0
+        v = min(v, MAX_PRIORITY)
+        self.priority_var.set(str(v))
         self.on_change(self.cfg_key, "priority", v)
 
     def get_priority(self) -> int:
@@ -165,6 +244,17 @@ class ModRow(ctk.CTkFrame):
 
     def get_enabled(self) -> bool:
         return self.enabled_var.get()
+
+    def set_priority_dupe(self, is_dupe: bool):
+        if is_dupe == self._dupe:
+            return
+        self._dupe = is_dupe
+        if is_dupe:
+            self.priority_entry.configure(border_color=COLOR_DUPE, border_width=2)
+        else:
+            self.priority_entry.configure(
+                border_color=self._entry_default_border, border_width=1,
+            )
 
 
 class MissingUpdatesDialog(ctk.CTkToplevel):
@@ -503,16 +593,21 @@ class App(ctk.CTk):
         self.geometry("1000x780")
         self.minsize(820, 560)
         self.configure(fg_color=COLOR_BG)
+        self.withdraw()
 
         self.mods_folder: Path | None = None
         self.scanned_mods: list[ModInfo] = []
         self.cfg: ModConfig = ModConfig()
         self.rows: list[ModRow] = []
         self.suggest_disable: set[str] = set()
+        self.manual_locks: set[str] = set()
         self.dirty = False
+        self._drag: dict | None = None
+        self._drag_pending: dict | None = None
+        self.paned: tk.PanedWindow | None = None
 
         self._build_layout()
-        self.after(100, self._initial_load)
+        self.after(0, self._initial_load)
 
     def _build_layout(self):
         # ── Top toolbar ──────────────────────────────────────────────────
@@ -590,24 +685,25 @@ class App(ctk.CTk):
         ).pack(side="right")
 
         # ── Resizable split: mod list / notes ────────────────────────────
-        paned = tk.PanedWindow(
+        self.paned = tk.PanedWindow(
             self, orient="vertical",
             sashwidth=8, sashrelief="flat",
             bg=COLOR_BG[1], bd=0,
         )
-        paned.pack(fill="both", expand=True, padx=18, pady=(4, 8))
+        self.paned.pack(fill="both", expand=True, padx=18, pady=(4, 8))
 
         # Wrap the scrollable list in a plain frame (PanedWindow can't host
         # a CTkScrollableFrame directly — its internal canvas confuses it).
-        list_wrapper = ctk.CTkFrame(paned, fg_color="transparent")
+        list_wrapper = ctk.CTkFrame(self.paned, fg_color="transparent")
         self.list_frame = ctk.CTkScrollableFrame(
             list_wrapper, label_text="", fg_color="transparent",
         )
         self.list_frame.pack(fill="both", expand=True)
-        paned.add(list_wrapper, minsize=140, stretch="always")
+        self._setup_smooth_scroll()
+        self.paned.add(list_wrapper, minsize=140, stretch="always")
 
         notes_container = ctk.CTkFrame(
-            paned, fg_color=COLOR_CARD,
+            self.paned, fg_color=COLOR_CARD,
             corner_radius=10, border_width=1, border_color=COLOR_BORDER,
         )
         ctk.CTkLabel(
@@ -620,15 +716,7 @@ class App(ctk.CTk):
         )
         self.notes_box.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         self.notes_box.configure(state="disabled")
-        paned.add(notes_container, minsize=100, stretch="never")
-
-        # Set initial split: notes pane gets ~40% of the window height
-        def _initial_split():
-            self.update_idletasks()
-            h = self.winfo_height()
-            notes_h = max(320, int(h * 0.40))
-            paned.sash_place(0, 1, h - notes_h)
-        self.after(80, _initial_split)
+        self.paned.add(notes_container, minsize=100, stretch="never")
 
         # ── Bottom status bar ────────────────────────────────────────────
         footer = ctk.CTkFrame(self, fg_color="transparent", height=24)
@@ -652,6 +740,7 @@ class App(ctk.CTk):
             self.destroy()
             return
 
+        self.manual_locks = load_manual_locks()
         self._load_from_disk()
 
     def _load_from_disk(self):
@@ -675,6 +764,7 @@ class App(ctk.CTk):
         # Reorder cfg.order so it matches priority value (low → high) for display
         self.cfg.order.sort(key=lambda k: (self.cfg.priority.get(k, 0), k.lower()))
 
+        first_show = not self.winfo_ismapped()
         self._rebuild_rows()
         status = f"{len(self.scanned_mods)} mods loaded"
         if orphans:
@@ -682,6 +772,12 @@ class App(ctk.CTk):
         self._set_status(status)
         self.footer_label.configure(text=f"Mods folder:  {self.mods_folder}")
         self.dirty = bool(orphans)
+
+        if first_show:
+            self.deiconify()
+            self.update_idletasks()
+            h = self.winfo_height()
+            self.paned.sash_place(0, 1, h - 80)
 
     def _rebuild_rows(self):
         for row in self.rows:
@@ -693,7 +789,9 @@ class App(ctk.CTk):
         for key in self.cfg.order:
             mod_info = mods_by_key.get(key)
             display_name = mod_info.display_name if mod_info else key
-            locked = mod_info.declared_priority is not None if mod_info else False
+            declared_locked = mod_info.declared_priority is not None if mod_info else False
+            manually_locked = key in self.manual_locks
+            locked = declared_locked or manually_locked
 
             row = ModRow(
                 self.list_frame,
@@ -705,9 +803,22 @@ class App(ctk.CTk):
                 suggest_disable=key in self.suggest_disable,
                 on_change=self._on_row_change,
                 on_move=self._on_row_move,
+                can_toggle_lock=not declared_locked,
+                on_toggle_lock=lambda k=key: self._toggle_manual_lock(k),
             )
-            row.pack(fill="x", pady=4)
             self.rows.append(row)
+
+        for row in self.rows:
+            self._bind_drag(row)
+        self._repack_rows()
+        self._check_dupe_priorities()
+
+    def _repack_rows(self):
+        """Reorder rows in the scroll frame (pack only — drag bindings are set on creation)."""
+        for row in self.rows:
+            row.pack_forget()
+        for row in self.rows:
+            row.pack(fill="x", pady=4)
 
     # ── actions ──────────────────────────────────────────────────────────────
 
@@ -716,6 +827,7 @@ class App(ctk.CTk):
             self.cfg.enabled[cfg_key] = bool(value)
         elif field == "priority":
             self.cfg.priority[cfg_key] = int(value)
+            self._check_dupe_priorities()
         self.dirty = True
         self._set_status("Unsaved changes")
 
@@ -728,7 +840,6 @@ class App(ctk.CTk):
         if new_idx < 0 or new_idx >= len(self.cfg.order):
             return
 
-        # Swap priorities with the neighbour, then swap order
         other = self.cfg.order[new_idx]
         p1 = self.cfg.priority.get(cfg_key, 0)
         p2 = self.cfg.priority.get(other, 0)
@@ -736,9 +847,29 @@ class App(ctk.CTk):
         self.cfg.priority[other] = p1
         self.cfg.order[idx], self.cfg.order[new_idx] = self.cfg.order[new_idx], self.cfg.order[idx]
 
-        self._rebuild_rows()
+        # Swap priority displays and row references without a full widget rebuild
+        row_a = self.rows[idx]
+        row_b = self.rows[new_idx]
+        row_a.priority_var.set(str(p2))
+        row_b.priority_var.set(str(p1))
+        self.rows[idx], self.rows[new_idx] = self.rows[new_idx], self.rows[idx]
+        self._repack_rows()
+
         self.dirty = True
         self._set_status("Unsaved changes")
+
+    def _toggle_manual_lock(self, cfg_key: str):
+        if cfg_key in self.manual_locks:
+            self.manual_locks.discard(cfg_key)
+            locked = False
+        else:
+            self.manual_locks.add(cfg_key)
+            locked = True
+        save_manual_locks(self.manual_locks)
+        for row in self.rows:
+            if row.cfg_key == cfg_key:
+                row.update_lock_state(locked)
+                break
 
     def _on_analyze(self):
         if not self.scanned_mods:
@@ -751,6 +882,9 @@ class App(ctk.CTk):
     def _apply_recommendation(self, result: AnalysisResult):
         self.cfg.order = [r.cfg_key for r in result.recommendations]
         self.suggest_disable = set(result.suggest_disable)
+
+        # Snapshot priorities for manually locked mods before renumbering
+        preserved = {k: self.cfg.priority[k] for k in self.manual_locks if k in self.cfg.priority}
 
         # Auto-disable mods flagged as dead — user can re-enable manually if desired
         for key in self.suggest_disable:
@@ -773,6 +907,10 @@ class App(ctk.CTk):
             self.cfg.priority[r.cfg_key] = next_value
             next_value += PRIORITY_STEP
 
+        # Restore manually locked priorities (overrides whatever the analyzer assigned)
+        for key, pri in preserved.items():
+            self.cfg.priority[key] = pri
+
         # Re-sort cfg.order to reflect the new priority values
         self.cfg.order.sort(key=lambda k: (self.cfg.priority.get(k, 0), k.lower()))
 
@@ -784,10 +922,23 @@ class App(ctk.CTk):
 
         self._rebuild_rows()
         self._show_notes(result)
+        self.after(50, self._expand_notes_pane)
         self.dirty = True
         self._set_status("Analysis applied — review and Save")
 
     def _on_apply(self):
+        dupes = self._find_dupe_priorities()
+        if dupes:
+            lines = "\n".join(
+                f"  Priority {p}: {', '.join(keys)}"
+                for p, keys in sorted(dupes.items())
+            )
+            messagebox.showwarning(
+                "Duplicate Priorities",
+                f"These mods share a priority value — resolve before saving:\n\n{lines}",
+            )
+            return
+
         if not messagebox.askyesno(
             "Save mod_config.cfg?",
             f"Write current load order to:\n{MOD_CONFIG_FILE}\n\n"
@@ -833,7 +984,158 @@ class App(ctk.CTk):
             return
         RenameZipsDialog(self, zip_paths, self.mods_folder, self._load_from_disk)
 
+    # ── drag to reorder ──────────────────────────────────────────────────────
+
+    def _bind_drag(self, row: ModRow):
+        for w in (row, row.label, row.subtitle):
+            w.bind("<ButtonPress-1>", lambda e, r=row: self._drag_start(e, r), add="+")
+            w.bind("<B1-Motion>", self._drag_motion, add="+")
+            w.bind("<ButtonRelease-1>", self._drag_end, add="+")
+
+    def _drag_start(self, event, row: ModRow):
+        if isinstance(event.widget, _INTERACTIVE):
+            return
+        if row not in self.rows:
+            return
+        self._drag_pending = {
+            "row": row,
+            "src_idx": self.rows.index(row),
+            "start_y": event.widget.winfo_rooty() + event.y,
+        }
+
+    def _drag_motion(self, event):
+        if self._drag_pending and not self._drag:
+            y = event.widget.winfo_rooty() + event.y
+            if abs(y - self._drag_pending["start_y"]) >= 6:
+                p = self._drag_pending
+                self._drag_pending = None
+                if p["row"] in self.rows:
+                    self._drag = {"row": p["row"], "src_idx": p["src_idx"], "cur_target": p["src_idx"]}
+                    p["row"].configure(border_color=COLOR_DRAG)
+        if not self._drag:
+            return
+        y = event.widget.winfo_rooty() + event.y
+        target_idx = self._get_row_at_screen_y(y)
+        if target_idx is None:
+            return
+        prev_target = self._drag["cur_target"]
+        if target_idx == prev_target:
+            return
+        if prev_target != self._drag["src_idx"] and prev_target < len(self.rows):
+            self.rows[prev_target].configure(border_color=COLOR_BORDER)
+        self._drag["cur_target"] = target_idx
+        if target_idx != self._drag["src_idx"]:
+            self.rows[target_idx].configure(border_color=COLOR_DROP)
+
+    def _drag_end(self, event):
+        self._drag_pending = None
+        if not self._drag:
+            return
+        drag = self._drag
+        self._drag = None
+        drag["row"].configure(border_color=COLOR_BORDER)
+        target = drag["cur_target"]
+        if target != drag["src_idx"] and target < len(self.rows):
+            self.rows[target].configure(border_color=COLOR_BORDER)
+        if target == drag["src_idx"]:
+            return
+        self._move_row_to(drag["src_idx"], target)
+
+    def _get_row_at_screen_y(self, y_screen: int) -> int | None:
+        for i, row in enumerate(self.rows):
+            if not row.winfo_ismapped():
+                continue
+            ry = row.winfo_rooty()
+            rh = row.winfo_height()
+            if ry <= y_screen <= ry + rh:
+                return i
+        return None
+
+    def _move_row_to(self, src_idx: int, target_idx: int):
+        lo, hi = min(src_idx, target_idx), max(src_idx, target_idx)
+
+        # Collect and preserve the priority values across the affected range
+        keys_in_range = self.cfg.order[lo:hi + 1]
+        priority_values = sorted(self.cfg.priority.get(k, 0) for k in keys_in_range)
+
+        key = self.cfg.order.pop(src_idx)
+        self.cfg.order.insert(target_idx, key)
+
+        # Redistribute sorted priorities to the new positions
+        for i, k in enumerate(self.cfg.order[lo:hi + 1]):
+            self.cfg.priority[k] = priority_values[i]
+
+        row = self.rows.pop(src_idx)
+        self.rows.insert(target_idx, row)
+
+        for i in range(lo, hi + 1):
+            k = self.cfg.order[i]
+            self.rows[i].priority_var.set(str(self.cfg.priority.get(k, 0)))
+
+        self._repack_rows()
+        self._check_dupe_priorities()
+        self.dirty = True
+        self._set_status("Unsaved changes")
+
+    # ── priority duplicate detection ─────────────────────────────────────────
+
+    def _check_dupe_priorities(self):
+        counts = Counter(self.cfg.priority.values())
+        for row in self.rows:
+            p = self.cfg.priority.get(row.cfg_key, 0)
+            row.set_priority_dupe(counts[p] > 1)
+
+    def _find_dupe_priorities(self) -> dict[int, list[str]]:
+        groups: dict[int, list[str]] = defaultdict(list)
+        for key in self.cfg.order:
+            p = self.cfg.priority.get(key, 0)
+            groups[p].append(key)
+        return {p: keys for p, keys in groups.items() if len(keys) > 1}
+
     # ── helpers ──────────────────────────────────────────────────────────────
+
+    def _expand_notes_pane(self):
+        self.update_idletasks()
+        h = self.winfo_height()
+        notes_h = max(220, int(h * 0.35))
+        self.paned.sash_place(0, 1, h - notes_h)
+
+    def _setup_smooth_scroll(self):
+        """Batch rapid MouseWheel events into one canvas update per frame.
+
+        CTK uses bind_all(<MouseWheel>) which fires canvas.yview("scroll", ...)
+        for every wheel tick. On Windows each call triggers a full canvas clear +
+        redraw, so fast scrolling causes visible black flashes. Intercepting
+        yview at the instance level lets us accumulate ticks and apply them in
+        a single pass. The scrollbar drag is unaffected — CTkScrollbar stored
+        the original bound method as its command at init time.
+        """
+        canvas = self.list_frame._parent_canvas
+        _orig = canvas.yview
+        _pending: list[int] = [0]
+        _job: list[str | None] = [None]
+
+        def _flushed_yview(op="", *args):
+            if not op:
+                return _orig()
+            if op == "scroll":
+                try:
+                    _pending[0] += int(float(args[0]))
+                except (ValueError, TypeError, IndexError):
+                    return
+                if _job[0]:
+                    canvas.after_cancel(_job[0])
+                what = args[1] if len(args) > 1 else "units"
+                def _flush():
+                    if _pending[0]:
+                        _orig("scroll", _pending[0], what)
+                        _pending[0] = 0
+                    _job[0] = None
+                _job[0] = canvas.after(8, _flush)
+            else:
+                _orig(op, *args)
+
+        canvas.yview = _flushed_yview
 
     def _show_notes(self, result: AnalysisResult):
         self.notes_box.configure(state="normal")

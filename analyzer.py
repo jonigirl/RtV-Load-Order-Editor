@@ -23,6 +23,7 @@ from vmz_scanner import MCM_MOD_ID, ModInfo
 
 PRIORITY_STEP = 5
 PRIORITY_START = 5
+MAX_PRIORITY = 999
 
 # Every positive-declared locked mod is placed at least this far above the
 # next-lower mod, rounded up to a clean multiple, so "load last" locked mods
@@ -455,7 +456,7 @@ def analyze(mods: list[ModInfo]) -> AnalysisResult:
     # Build locked recommendations using their effective (possibly bumped) values.
     recs: list[Recommendation] = []
     for m in locked:
-        pri = effective_priority[m.cfg_key]
+        pri = min(effective_priority[m.cfg_key], MAX_PRIORITY)
         if m.cfg_key in bump_info:
             original, _ = bump_info[m.cfg_key]
             reason = (
@@ -503,14 +504,15 @@ def analyze(mods: list[ModInfo]) -> AnalysisResult:
             touched = sorted({ovr.base_script for ovr in m.overrides})
             reason = f"overrides {', '.join(touched)}"
 
+        capped = min(next_value, MAX_PRIORITY)
         recs.append(Recommendation(
             cfg_key=key,
             display_name=m.display_name,
-            priority=next_value,
+            priority=capped,
             locked=False,
             reason=reason,
         ))
-        assigned[key] = next_value
+        assigned[key] = capped
         next_value += PRIORITY_STEP
 
     # Final sweep: verify every constraint edge is satisfied. Anything still
