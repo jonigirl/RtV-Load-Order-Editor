@@ -1,10 +1,8 @@
 __pycache__
 .claude
-RtV_LoadOrder_Editor.zip
-app_settings.json
+test_data/
 
-# PyInstaller build artifacts
-build/
-dist/
-*.spec
-RtV_LoE.png
+# Other
+api-1.yaml
+CLAUDE.md
+modworkshop_api.md
