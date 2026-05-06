@@ -326,10 +326,21 @@ def scan_archive(path: Path) -> ModInfo:
     return info
 
 
-def scan_mods_folder(folder: Path) -> list[ModInfo]:
-    """Scan all .vmz/.zip files in the given folder. Returns sorted by filename."""
+def scan_mods_folder(folder: Path, progress_cb=None) -> list[ModInfo]:
+    """Scan all .vmz/.zip files in the given folder. Returns sorted by filename.
+
+    progress_cb (optional): callable(current, total, filename) invoked once
+    per archive before scanning it. Used by the GUI splash screen.
+    """
     archives: list[Path] = []
     for ext in MOD_EXTENSIONS:
         archives.extend(folder.glob(f"*{ext}"))
     archives.sort(key=lambda p: p.name.lower())
-    return [scan_archive(p) for p in archives]
+
+    results: list[ModInfo] = []
+    total = len(archives)
+    for i, p in enumerate(archives):
+        if progress_cb is not None:
+            progress_cb(i, total, p.name)
+        results.append(scan_archive(p))
+    return results

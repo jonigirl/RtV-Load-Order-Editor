@@ -5,7 +5,7 @@ import shutil
 import tkinter as tk
 from collections import Counter, defaultdict
 from pathlib import Path
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 
 import customtkinter as ctk
 
@@ -43,6 +43,19 @@ COLOR_DUPE        = "#c94040"  # red — duplicate priority warning
 COLOR_DRAG        = "#1f6feb"  # blue border — row being dragged
 COLOR_DROP        = "#2d8f47"  # green border — drag drop target
 
+# Dark-mode resolved colors. Plain tk widgets inside ModRow can't accept
+# (light, dark) tuples, so we pre-resolve to the dark variant since the app
+# forces dark appearance mode. Keep in sync with the tuples above.
+_CARD_BG       = COLOR_CARD[1]
+_CARD_HOVER_BG = COLOR_CARD_HOVER[1]
+_BORDER_BG     = COLOR_BORDER[1]
+_TEXT_FG       = COLOR_TEXT[1]
+_TEXT_MUTED_FG = COLOR_TEXT_MUTED[1]
+_TEXT_DIM_FG   = COLOR_TEXT_DIM[1]
+_WARNING_FG    = COLOR_WARNING[1]
+_LOCK_FG       = COLOR_LOCK[1]
+_ENTRY_BG      = "#1a1a1a"
+
 # ── Fonts ──────────────────────────────────────────────────────────────────
 FONT_TITLE   = ("Segoe UI", 18, "bold")
 FONT_SECTION = ("Segoe UI", 13, "bold")
@@ -53,8 +66,14 @@ FONT_MONO    = ("Consolas", 11)
 _INTERACTIVE = (ctk.CTkCheckBox, ctk.CTkButton, ctk.CTkEntry)
 
 
-class ModRow(ctk.CTkFrame):
-    """A single mod card — checkbox, name, priority field, up/down arrows."""
+class ModRow(tk.Frame):
+    """A single mod card — checkbox, name, priority field, up/down arrows.
+
+    Built from plain tk widgets (one CTkCheckBox aside) so the scroll canvas
+    only has ~1 nested canvas per row instead of ~5. This is what keeps fast
+    scrolling from blanking out — every CTk widget redraws itself on each
+    canvas scroll, plain tk widgets don't.
+    """
 
     def __init__(
         self,
@@ -72,11 +91,11 @@ class ModRow(ctk.CTkFrame):
     ):
         super().__init__(
             master,
-            fg_color=COLOR_CARD,
-            corner_radius=8,
-            border_width=1,
-            border_color=COLOR_BORDER,
-            height=46,
+            bg=_CARD_BG,
+            highlightthickness=1,
+            highlightbackground=_BORDER_BG,
+            highlightcolor=_BORDER_BG,
+            bd=0,
         )
         self.cfg_key = cfg_key
         self._display_name = display_name
@@ -89,13 +108,13 @@ class ModRow(ctk.CTkFrame):
         self._dupe = False
 
         if not enabled:
-            name_color = COLOR_TEXT_DIM
+            name_color = _TEXT_DIM_FG
         elif suggest_disable:
-            name_color = COLOR_WARNING
+            name_color = _WARNING_FG
         elif locked:
-            name_color = COLOR_LOCK
+            name_color = _LOCK_FG
         else:
-            name_color = COLOR_TEXT
+            name_color = _TEXT_FG
 
         self.enabled_var = ctk.BooleanVar(value=enabled)
         self.check = ctk.CTkCheckBox(
@@ -106,45 +125,40 @@ class ModRow(ctk.CTkFrame):
         self.check.grid(row=0, column=0, padx=(12, 8), pady=10)
 
         prefix = "🔒 " if locked else ("⚠ " if suggest_disable else "")
-        self.label = ctk.CTkLabel(
+        self.label = tk.Label(
             self,
             text=f"{prefix}{display_name}",
             anchor="w",
             font=FONT_BODY,
-            text_color=name_color,
+            fg=name_color,
+            bg=_CARD_BG,
         )
         self.label.grid(row=0, column=1, sticky="w", padx=(0, 4))
 
-        self.subtitle = ctk.CTkLabel(
+        self.subtitle = tk.Label(
             self, text=cfg_key, anchor="w",
-            font=FONT_SMALL, text_color=COLOR_TEXT_MUTED,
+            font=FONT_SMALL, fg=_TEXT_MUTED_FG, bg=_CARD_BG,
         )
         self.subtitle.grid(row=0, column=2, sticky="w", padx=(0, 8))
 
         self.priority_var = ctk.StringVar(value=str(priority))
-        self.priority_entry = ctk.CTkEntry(
-            self, textvariable=self.priority_var, width=70, height=30,
+        self.priority_entry = tk.Entry(
+            self, textvariable=self.priority_var, width=5,
             justify="center", font=FONT_BODY,
-            corner_radius=6,
+            bg=_ENTRY_BG, fg=_TEXT_FG,
+            insertbackground=_TEXT_FG,
+            relief="flat", bd=0,
+            highlightthickness=1,
+            highlightbackground=_BORDER_BG,
+            highlightcolor=COLOR_ACCENT,
         )
-        self.priority_entry.grid(row=0, column=3, padx=(8, 4), pady=8)
+        self.priority_entry.grid(row=0, column=3, padx=(8, 4), pady=8, ipady=5)
         self.priority_entry.bind("<FocusOut>", lambda e: self._priority_changed())
         self.priority_entry.bind("<Return>", lambda e: self._priority_changed())
-        self._entry_default_border = self.priority_entry.cget("border_color")
 
-        self.up_btn = ctk.CTkButton(
-            self, text="▲", width=30, height=30,
-            corner_radius=6,
-            fg_color=COLOR_NEUTRAL, hover_color=COLOR_NEUTRAL_HV,
-            command=lambda: self.on_move(self.cfg_key, -1),
-        )
+        self.up_btn = self._make_arrow_btn("▲", lambda: self.on_move(self.cfg_key, -1))
         self.up_btn.grid(row=0, column=4, padx=2, pady=8)
-        self.down_btn = ctk.CTkButton(
-            self, text="▼", width=30, height=30,
-            corner_radius=6,
-            fg_color=COLOR_NEUTRAL, hover_color=COLOR_NEUTRAL_HV,
-            command=lambda: self.on_move(self.cfg_key, +1),
-        )
+        self.down_btn = self._make_arrow_btn("▼", lambda: self.on_move(self.cfg_key, +1))
         self.down_btn.grid(row=0, column=5, padx=(2, 12), pady=8)
 
         self.grid_columnconfigure(2, weight=1)
@@ -158,71 +172,89 @@ class ModRow(ctk.CTkFrame):
             for w in (self, self.label, self.subtitle):
                 w.bind("<Button-3>", self._show_context_menu, add="+")
 
+    def _make_arrow_btn(self, text: str, command):
+        btn = tk.Label(
+            self, text=text, font=FONT_BODY,
+            bg=COLOR_NEUTRAL, fg=_TEXT_FG,
+            cursor="hand2", padx=8, pady=2,
+        )
+        btn.bind("<Button-1>", lambda e: command())
+        btn.bind("<Enter>", lambda e: btn.configure(bg=COLOR_NEUTRAL_HV))
+        btn.bind("<Leave>", lambda e: btn.configure(bg=COLOR_NEUTRAL))
+        return btn
+
     def _on_hover_in(self, _):
-        self.configure(fg_color=COLOR_CARD_HOVER)
+        self.configure(bg=_CARD_HOVER_BG)
+        self.label.configure(bg=_CARD_HOVER_BG)
+        self.subtitle.configure(bg=_CARD_HOVER_BG)
 
     def _on_hover_out(self, _):
-        self.configure(fg_color=COLOR_CARD)
+        self.configure(bg=_CARD_BG)
+        self.label.configure(bg=_CARD_BG)
+        self.subtitle.configure(bg=_CARD_BG)
 
     def _show_context_menu(self, event):
-        root = self.winfo_toplevel()
-
-        popup = tk.Toplevel(root)
+        # Custom Toplevel popup so we can control item padding (tk.Menu won't
+        # let us). The earlier version of this used grab_set() which could
+        # get stuck if grab_release raised TclError — instead we dismiss via
+        # <FocusOut> (popup loses focus when user clicks outside) plus an
+        # `alive` flag to prevent any double-destroy.
+        popup = tk.Toplevel(self.winfo_toplevel())
         popup.overrideredirect(True)
         popup.attributes("-topmost", True)
-        popup.configure(bg=COLOR_CARD[1])
+        popup.configure(bg=_BORDER_BG)  # acts as the 1px outer border
 
-        frame = ctk.CTkFrame(
-            popup, fg_color=COLOR_CARD[1], corner_radius=8,
-            border_width=1, border_color=COLOR_BORDER[1],
-        )
-        frame.pack(padx=0, pady=0)
+        inner = tk.Frame(popup, bg=_CARD_BG)
+        inner.pack(padx=1, pady=1)
 
-        icon = "🔓  " if self.locked else "🔒  "
+        icon = "🔓 " if self.locked else "🔒 "
         action = "Unlock priority" if self.locked else "Lock priority"
+        item = tk.Label(
+            inner, text=f"{icon}{action}",
+            font=FONT_SMALL, fg=_TEXT_FG, bg=_CARD_BG,
+            padx=14, pady=6, anchor="w",
+            cursor="hand2",
+        )
+        item.pack(fill="x")
 
-        def _dismiss():
+        alive = [True]
+
+        def _dismiss(_e=None):
+            if not alive[0]:
+                return
+            alive[0] = False
             try:
-                popup.grab_release()
                 popup.destroy()
             except tk.TclError:
                 pass
 
-        def _run():
+        def _select(_e=None):
             _dismiss()
             self._on_toggle_lock()
 
-        ctk.CTkButton(
-            frame, text=f"{icon}{action}", anchor="center",
-            fg_color="transparent",
-            hover_color=COLOR_CARD_HOVER[1],
-            text_color=COLOR_TEXT[1],
-            corner_radius=6,
-            height=34, width=0,
-            font=FONT_BODY,
-            command=_run,
-        ).pack(padx=4, pady=4)
+        item.bind("<Button-1>", _select)
+        item.bind("<Enter>", lambda e: item.configure(bg=COLOR_ACCENT, fg="#ffffff"))
+        item.bind("<Leave>", lambda e: item.configure(bg=_CARD_BG, fg=_TEXT_FG))
 
         popup.update_idletasks()
         popup.geometry(f"+{event.x_root}+{event.y_root}")
         popup.lift()
-        popup.focus_force()
-        popup.grab_set()
-        popup.bind("<Button-1>", lambda e: _dismiss() if e.widget is popup else None)
-        popup.bind("<Escape>", lambda e: _dismiss())
+        popup.focus_set()
+        popup.bind("<FocusOut>", _dismiss)
+        popup.bind("<Escape>", _dismiss)
 
     def update_lock_state(self, locked: bool):
         self.locked = locked
         if not self.enabled_var.get():
-            name_color = COLOR_TEXT_DIM
+            name_color = _TEXT_DIM_FG
         elif self.suggest_disable:
-            name_color = COLOR_WARNING
+            name_color = _WARNING_FG
         elif locked:
-            name_color = COLOR_LOCK
+            name_color = _LOCK_FG
         else:
-            name_color = COLOR_TEXT
+            name_color = _TEXT_FG
         prefix = "🔒 " if locked else ("⚠ " if self.suggest_disable else "")
-        self.label.configure(text=f"{prefix}{self._display_name}", text_color=name_color)
+        self.label.configure(text=f"{prefix}{self._display_name}", fg=name_color)
 
     def _enabled_changed(self):
         self.on_change(self.cfg_key, "enabled", self.enabled_var.get())
@@ -250,10 +282,16 @@ class ModRow(ctk.CTkFrame):
             return
         self._dupe = is_dupe
         if is_dupe:
-            self.priority_entry.configure(border_color=COLOR_DUPE, border_width=2)
+            self.priority_entry.configure(
+                highlightbackground=COLOR_DUPE,
+                highlightcolor=COLOR_DUPE,
+                highlightthickness=2,
+            )
         else:
             self.priority_entry.configure(
-                border_color=self._entry_default_border, border_width=1,
+                highlightbackground=_BORDER_BG,
+                highlightcolor=COLOR_ACCENT,
+                highlightthickness=1,
             )
 
 
@@ -586,6 +624,76 @@ class RenameZipsDialog(ctk.CTkToplevel):
             self.destroy()
 
 
+class SplashWindow(tk.Toplevel):
+    """Loading window shown while the main window builds.
+
+    Plain tk + ttk.Progressbar — no CTk widgets — so it appears instantly
+    without paying CTk's draw-engine setup cost. Stays on top, undecorated,
+    centered on screen. Driven by `set_progress(current, total, message)`.
+    """
+
+    WIDTH = 420
+    HEIGHT = 150
+
+    def __init__(self, master):
+        super().__init__(master)
+        self.overrideredirect(True)
+        self.attributes("-topmost", True)
+        self.configure(bg=_BORDER_BG)  # acts as the 1px outer border
+
+        inner = tk.Frame(self, bg=_CARD_BG)
+        inner.pack(fill="both", expand=True, padx=1, pady=1)
+
+        tk.Label(
+            inner, text="RtV Load Order Editor",
+            font=FONT_TITLE, fg=_TEXT_FG, bg=_CARD_BG,
+        ).pack(pady=(22, 4), padx=24)
+
+        self._status = tk.Label(
+            inner, text="Starting…",
+            font=FONT_SMALL, fg=_TEXT_MUTED_FG, bg=_CARD_BG,
+        )
+        self._status.pack(pady=(0, 14), padx=24)
+
+        # Style the ttk progressbar to fit the dark theme. The "default" theme
+        # honors all of these options; the native "vista"/"xpnative" themes
+        # ignore most colors, so we explicitly switch to "default".
+        style = ttk.Style(self)
+        try:
+            style.theme_use("default")
+        except tk.TclError:
+            pass
+        style.configure(
+            "Splash.Horizontal.TProgressbar",
+            troughcolor=_BORDER_BG,
+            background=COLOR_ACCENT,
+            bordercolor=_BORDER_BG,
+            lightcolor=COLOR_ACCENT,
+            darkcolor=COLOR_ACCENT,
+            thickness=10,
+        )
+        self._bar = ttk.Progressbar(
+            inner, style="Splash.Horizontal.TProgressbar",
+            mode="determinate", length=self.WIDTH - 60, maximum=100,
+        )
+        self._bar.pack(pady=(0, 22), padx=24)
+
+        # Center on screen
+        self.update_idletasks()
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        x = (sw - self.WIDTH) // 2
+        y = (sh - self.HEIGHT) // 2
+        self.geometry(f"{self.WIDTH}x{self.HEIGHT}+{x}+{y}")
+
+    def set_progress(self, current: int, total: int, message: str = ""):
+        if total > 0:
+            self._bar["value"] = (current / total) * 100
+        if message:
+            self._status.configure(text=message)
+        self.update()  # force immediate paint while the caller is busy
+
+
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -605,6 +713,7 @@ class App(ctk.CTk):
         self._drag: dict | None = None
         self._drag_pending: dict | None = None
         self.paned: tk.PanedWindow | None = None
+        self._splash: SplashWindow | None = None
 
         self._build_layout()
         self.after(0, self._initial_load)
@@ -741,10 +850,17 @@ class App(ctk.CTk):
             return
 
         self.manual_locks = load_manual_locks()
-        self._load_from_disk()
 
-    def _load_from_disk(self):
-        self.scanned_mods = scan_mods_folder(self.mods_folder)
+        # Splash appears now (after any folder/config prompts) and drives
+        # progress through the scan + initial UI build.
+        self._splash = SplashWindow(self)
+        self._splash.set_progress(0, 1, "Scanning mods…")
+        self._load_from_disk(progress_cb=self._splash.set_progress)
+
+    def _load_from_disk(self, progress_cb=None):
+        self.scanned_mods = scan_mods_folder(self.mods_folder, progress_cb=progress_cb)
+        if progress_cb is not None:
+            progress_cb(1, 1, "Building UI…")
         self.cfg = read_config(MOD_CONFIG_FILE)
         sync_with_mods(self.cfg, [m.cfg_key for m in self.scanned_mods])
 
@@ -774,10 +890,18 @@ class App(ctk.CTk):
         self.dirty = bool(orphans)
 
         if first_show:
+            # Flush all queued CTk draw callbacks while still withdrawn and
+            # hidden behind the splash. CTk widgets schedule their _draw()
+            # via after(), so without this the toolbar/buttons would pop in
+            # piece by piece after deiconify.
+            self.update()
             self.deiconify()
             self.update_idletasks()
             h = self.winfo_height()
             self.paned.sash_place(0, 1, h - 80)
+            if self._splash is not None:
+                self._splash.destroy()
+                self._splash = None
 
     def _rebuild_rows(self):
         for row in self.rows:
@@ -1011,7 +1135,7 @@ class App(ctk.CTk):
                 self._drag_pending = None
                 if p["row"] in self.rows:
                     self._drag = {"row": p["row"], "src_idx": p["src_idx"], "cur_target": p["src_idx"]}
-                    p["row"].configure(border_color=COLOR_DRAG)
+                    p["row"].configure(highlightbackground=COLOR_DRAG, highlightcolor=COLOR_DRAG)
         if not self._drag:
             return
         y = event.widget.winfo_rooty() + event.y
@@ -1022,10 +1146,10 @@ class App(ctk.CTk):
         if target_idx == prev_target:
             return
         if prev_target != self._drag["src_idx"] and prev_target < len(self.rows):
-            self.rows[prev_target].configure(border_color=COLOR_BORDER)
+            self.rows[prev_target].configure(highlightbackground=_BORDER_BG, highlightcolor=_BORDER_BG)
         self._drag["cur_target"] = target_idx
         if target_idx != self._drag["src_idx"]:
-            self.rows[target_idx].configure(border_color=COLOR_DROP)
+            self.rows[target_idx].configure(highlightbackground=COLOR_DROP, highlightcolor=COLOR_DROP)
 
     def _drag_end(self, event):
         self._drag_pending = None
@@ -1033,10 +1157,10 @@ class App(ctk.CTk):
             return
         drag = self._drag
         self._drag = None
-        drag["row"].configure(border_color=COLOR_BORDER)
+        drag["row"].configure(highlightbackground=_BORDER_BG, highlightcolor=_BORDER_BG)
         target = drag["cur_target"]
         if target != drag["src_idx"] and target < len(self.rows):
-            self.rows[target].configure(border_color=COLOR_BORDER)
+            self.rows[target].configure(highlightbackground=_BORDER_BG, highlightcolor=_BORDER_BG)
         if target == drag["src_idx"]:
             return
         self._move_row_to(drag["src_idx"], target)
@@ -1101,41 +1225,71 @@ class App(ctk.CTk):
         self.paned.sash_place(0, 1, h - notes_h)
 
     def _setup_smooth_scroll(self):
-        """Batch rapid MouseWheel events into one canvas update per frame.
+        """Throttle canvas scroll commands to ~60fps so rapid input
+        (mouse-wheel storms or fast scrollbar drags) coalesces into one
+        canvas redraw per frame instead of flooding it.
 
-        CTK uses bind_all(<MouseWheel>) which fires canvas.yview("scroll", ...)
-        for every wheel tick. On Windows each call triggers a full canvas clear +
-        redraw, so fast scrolling causes visible black flashes. Intercepting
-        yview at the instance level lets us accumulate ticks and apply them in
-        a single pass. The scrollbar drag is unaffected — CTkScrollbar stored
-        the original bound method as its command at init time.
+        Without throttling, fast scrollbar drag fires `yview("moveto", ...)`
+        faster than the canvas can repaint its embedded windows, so exposed
+        strips show the canvas bg color until each child catches up — the
+        "blank-out" effect.
+
+        - `scroll` ops accumulate (delta is additive)
+        - `moveto` ops keep only the latest fraction (target supersedes)
+        - Flush job runs on a stable 16ms cadence; not cancelled per-event,
+          so a continuous drag stays at 60fps instead of waiting for the
+          input to stop.
+
+        The scrollbar's command is also re-pointed at the wrapped yview —
+        CTkScrollbar caches the original bound method at init time, so just
+        replacing `canvas.yview` on its own would leave drag unthrottled.
         """
         canvas = self.list_frame._parent_canvas
         _orig = canvas.yview
-        _pending: list[int] = [0]
+
+        _pending_scroll = [0]                  # accumulated wheel units
+        _pending_moveto: list[float | None] = [None]  # latest target fraction
+        _scroll_units = ["units"]
         _job: list[str | None] = [None]
+        FRAME_MS = 16
+
+        def _flush():
+            if _pending_moveto[0] is not None:
+                _orig("moveto", _pending_moveto[0])
+                _pending_moveto[0] = None
+                _pending_scroll[0] = 0          # moveto is absolute; drop pending scroll
+            elif _pending_scroll[0]:
+                _orig("scroll", _pending_scroll[0], _scroll_units[0])
+                _pending_scroll[0] = 0
+            _job[0] = None
+
+        def _schedule():
+            if _job[0] is None:
+                _job[0] = canvas.after(FRAME_MS, _flush)
 
         def _flushed_yview(op="", *args):
             if not op:
                 return _orig()
             if op == "scroll":
                 try:
-                    _pending[0] += int(float(args[0]))
+                    _pending_scroll[0] += int(float(args[0]))
                 except (ValueError, TypeError, IndexError):
                     return
-                if _job[0]:
-                    canvas.after_cancel(_job[0])
-                what = args[1] if len(args) > 1 else "units"
-                def _flush():
-                    if _pending[0]:
-                        _orig("scroll", _pending[0], what)
-                        _pending[0] = 0
-                    _job[0] = None
-                _job[0] = canvas.after(8, _flush)
+                if len(args) > 1:
+                    _scroll_units[0] = args[1]
+                _schedule()
+            elif op == "moveto":
+                try:
+                    _pending_moveto[0] = float(args[0])
+                except (ValueError, TypeError, IndexError):
+                    return
+                _schedule()
             else:
                 _orig(op, *args)
 
         canvas.yview = _flushed_yview
+        # Re-point the scrollbar so drag goes through our throttle too.
+        self.list_frame._scrollbar.configure(command=_flushed_yview)
 
     def _show_notes(self, result: AnalysisResult):
         self.notes_box.configure(state="normal")
