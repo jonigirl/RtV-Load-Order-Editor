@@ -1013,7 +1013,14 @@ class App(ctk.CTk):
         # progress through the scan + initial UI build.
         self._splash = SplashWindow(self)
         self._splash.set_progress(0, 1, "Scanning mods…")
-        self._load_from_disk(progress_cb=self._splash.set_progress)
+        try:
+            self._load_from_disk(progress_cb=self._splash.set_progress)
+        except Exception as exc:
+            if self._splash is not None:
+                self._splash.destroy()
+                self._splash = None
+            messagebox.showerror("Load failed", str(exc))
+            self.destroy()
 
     def _load_from_disk(self, progress_cb=None):
         self.scanned_mods = scan_mods_folder(self.mods_folder, progress_cb=progress_cb)

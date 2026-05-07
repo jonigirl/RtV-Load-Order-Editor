@@ -13,8 +13,10 @@ Rules:
   or it will inherit from the wrong (vanilla) version. Two takeovers on the same
   base is a hard conflict — only the highest-priority one sticks.
 """
+
 from __future__ import annotations
 
+import heapq
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -35,13 +37,22 @@ def _round_up(n: int, step: int) -> int:
     """Smallest multiple of `step` that is >= n."""
     return ((n + step - 1) // step) * step
 
+
 # File extensions that are documentation / repo metadata rather than game
 # content. Overlaps on these paths don't affect gameplay and would just add
 # noise to the warnings list.
 NONGAMEPLAY_SUFFIXES = (
-    ".md", ".txt", ".rst", ".yml", ".yaml",
-    ".gitignore", ".gitattributes", ".license",
-    "license", "changelog", "readme",
+    ".md",
+    ".txt",
+    ".rst",
+    ".yml",
+    ".yaml",
+    ".gitignore",
+    ".gitattributes",
+    ".license",
+    "license",
+    "changelog",
+    "readme",
 )
 
 # Plain-English descriptions for Godot lifecycle functions
@@ -60,19 +71,22 @@ def _humanize_function(base_script: str, func_name: str) -> str:
     if func_name in LIFECYCLE_DESCRIPTIONS:
         return f"{base_script.lower()} {LIFECYCLE_DESCRIPTIONS[func_name]}"
     # Split CamelCase / snake_case into spaced lowercase
-    spaced = re.sub(r'(?<!^)(?=[A-Z])', ' ', func_name).replace('_', ' ').strip()
+    spaced = re.sub(r"(?<!^)(?=[A-Z])", " ", func_name).replace("_", " ").strip()
     return f"{base_script.lower()} {spaced.lower()}"
 
 
 def _consequence(mod_display_name: str, severity: str) -> str:
     """One-line description of what happens to a mod when it 'loses' a conflict."""
     if severity == "init":
-        return (f'"{mod_display_name}" becomes FULLY INACTIVE '
-                f'(it needs its startup code to set things up)')
+        return (
+            f'"{mod_display_name}" becomes FULLY INACTIVE '
+            f"(it needs its startup code to set things up)"
+        )
     if severity == "only_feature":
-        return (f'"{mod_display_name}" becomes FULLY INACTIVE '
-                f'(this is its only feature)')
-    return f'"{mod_display_name}" only loses this one feature; everything else still works'
+        return f'"{mod_display_name}" becomes FULLY INACTIVE (this is its only feature)'
+    return (
+        f'"{mod_display_name}" only loses this one feature; everything else still works'
+    )
 
 
 def _severity(func_name: str, total_overrides: int) -> str:
@@ -99,11 +113,12 @@ def _is_gameplay_path(res_path: str) -> bool:
 @dataclass
 class Recommendation:
     """One mod's recommended state in the proposed load order."""
-    cfg_key: str          # mod-id@version (or zip:filename fallback)
+
+    cfg_key: str  # mod-id@version (or zip:filename fallback)
     display_name: str
     priority: int
-    locked: bool          # True if priority came from mod.txt declaration
-    reason: str           # human-readable explanation
+    locked: bool  # True if priority came from mod.txt declaration
+    reason: str  # human-readable explanation
 
 
 @dataclass
@@ -144,7 +159,7 @@ def _build_constraints(
             listed = ", ".join(f'"{name_for[o]}"' for o in owners)
             warnings.append(
                 f'Duplicate mod id "{mid}" is used by {listed}. '
-                f'The mod loader will only load one — disable the duplicates to choose which one.'
+                f"The mod loader will only load one — disable the duplicates to choose which one."
             )
             # All but the first are candidates for disable
             suggest_disable.extend(owners[1:])
@@ -165,11 +180,11 @@ def _build_constraints(
             losers = [o for o in uniq if o != keeper]
             disable_names = ", ".join(f'"{name_for[o]}"' for o in losers)
             warnings.append(
-                f'Multiple mods declare `class_name {cn}`: {listed}. '
-                f'Godot refuses to load a project with duplicate class names — '
-                f'the game will not boot with all of these enabled.\n'
+                f"Multiple mods declare `class_name {cn}`: {listed}. "
+                f"Godot refuses to load a project with duplicate class names — "
+                f"the game will not boot with all of these enabled.\n"
                 f'  -> Recommended fix: keep "{name_for[keeper]}" enabled and '
-                f'disable {disable_names}.'
+                f"disable {disable_names}."
             )
             suggest_disable.extend(losers)
 
@@ -185,8 +200,8 @@ def _build_constraints(
             listed = ", ".join(f'"{name_for[o]}"' for o in owners)
             warnings.append(
                 f'Multiple mods declare the same autoload name "{autoload_name}": {listed}. '
-                f'Only one will actually load — the others\' entry points will silently fail. '
-                f'The mod authors should rename to something more specific.'
+                f"Only one will actually load — the others' entry points will silently fail. "
+                f"The mod authors should rename to something more specific."
             )
 
     # ── File-path overlaps ─────────────────────────────────────────────
@@ -211,8 +226,8 @@ def _build_constraints(
         else:
             detail = f"{len(paths)} shared paths (first: {paths[0]})"
         warnings.append(
-            f'{listed} ship the same file path: {detail}. '
-            f'The highest-priority mod wins; the others\' copy of that file is dropped.'
+            f"{listed} ship the same file path: {detail}. "
+            f"The highest-priority mod wins; the others' copy of that file is dropped."
         )
 
     # ── Function-level override constraints ────────────────────────────
@@ -245,7 +260,7 @@ def _build_constraints(
                     notes.append(
                         f'"{name_for[ws]}" must have a HIGHER load order number than '
                         f'"{name_for[ns]}", or "{name_for[ws]}" will stop working in-game.  '
-                        f'[technical: both touch {base}.{func}()]'
+                        f"[technical: both touch {base}.{func}()]"
                     )
 
         # Conflict: multiple nosuper mods on same function. Strategy:
@@ -270,8 +285,8 @@ def _build_constraints(
                         edges[other].add(winner)
                 recommendation = (
                     f'\n  -> Recommended fix: load "{name_for[winner]}" with the '
-                    f'HIGHEST number of these mods, so it wins this conflict. '
-                    f'The others only lose this one feature and keep working.'
+                    f"HIGHEST number of these mods, so it wins this conflict. "
+                    f"The others only lose this one feature and keep working."
                 )
             elif len(dying) >= 2:
                 # All would die — no load order saves them. Suggest disabling.
@@ -280,29 +295,30 @@ def _build_constraints(
                 suggest_disable.extend(to_disable)
                 disable_names = ", ".join(f'"{name_for[n]}"' for n in to_disable)
                 recommendation = (
-                    f'\n  -> Recommended fix: NO load order will save all of these '
-                    f'mods — only one can be active. Suggest disabling {disable_names} '
+                    f"\n  -> Recommended fix: NO load order will save all of these "
+                    f"mods — only one can be active. Suggest disabling {disable_names} "
                     f'and keeping "{name_for[keep]}" enabled (it has the most features).'
                 )
 
             if len(nosuper) == 2:
-                header = (f'"{name_for[nosuper[0]]}" and "{name_for[nosuper[1]]}" '
-                          f'both change {feature}.')
+                header = (
+                    f'"{name_for[nosuper[0]]}" and "{name_for[nosuper[1]]}" '
+                    f"both change {feature}."
+                )
             else:
                 listed = ", ".join(f'"{name_for[n]}"' for n in nosuper)
-                header = f'{listed} all change {feature}.'
+                header = f"{listed} all change {feature}."
 
             consequences = [
-                f'    - {_consequence(name_for[n], severities[n])}'
-                for n in nosuper
+                f"    - {_consequence(name_for[n], severities[n])}" for n in nosuper
             ]
 
             warnings.append(
-                f'{header} The mod with the highest load order number wins. '
-                f'What each mod loses if it has a lower number:\n'
+                f"{header} The mod with the highest load order number wins. "
+                f"What each mod loses if it has a lower number:\n"
                 + "\n".join(consequences)
                 + recommendation
-                + f'\n  [technical: {base}.{func}()]'
+                + f"\n  [technical: {base}.{func}()]"
             )
 
     # ── take_over_path() constraints ───────────────────────────────────
@@ -329,7 +345,7 @@ def _build_constraints(
                 notes.append(
                     f'"{name_for[e]}" must have a HIGHER load order number than '
                     f'"{name_for[t]}", or "{name_for[e]}" will inherit from the wrong '
-                    f'(vanilla) version of {base}.gd.  '
+                    f"(vanilla) version of {base}.gd.  "
                     f'[technical: "{name_for[t]}" replaces res://Scripts/{base}.gd via take_over_path()]'
                 )
 
@@ -345,11 +361,11 @@ def _build_constraints(
         if len(tmods) >= 2:
             listed = ", ".join(f'"{name_for[t]}"' for t in tmods)
             notes.append(
-                f'{listed} all replace res://Scripts/{base}.gd via take_over_path. '
-                f'They stack via inheritance — each mod inherits from the one loaded '
-                f'before it, so all of their features remain active. '
-                f'Any function that multiple of them override without super() is listed '
-                f'above as a separate conflict.'
+                f"{listed} all replace res://Scripts/{base}.gd via take_over_path. "
+                f"They stack via inheritance — each mod inherits from the one loaded "
+                f"before it, so all of their features remain active. "
+                f"Any function that multiple of them override without super() is listed "
+                f"above as a separate conflict."
             )
 
     # ── Mod Configuration Menu soft dependency ─────────────────────────
@@ -368,15 +384,17 @@ def _build_constraints(
             listed = ", ".join(f'"{m.display_name}"' for m in mcm_users[:8])
             more = "" if len(mcm_users) <= 8 else f" (+{len(mcm_users) - 8} more)"
             warnings.append(
-                f'{len(mcm_users)} mod(s) reference Mod Configuration Menu but MCM is not '
-                f'installed: {listed}{more}. Their in-game settings UIs will not appear. '
+                f"{len(mcm_users)} mod(s) reference Mod Configuration Menu but MCM is not "
+                f"installed: {listed}{more}. Their in-game settings UIs will not appear. "
                 f'Install "Mod Configuration Menu" from ModWorkshop to enable them.'
             )
 
     return edges, warnings, notes, suggest_disable
 
 
-def _topo_sort(nodes: list[str], edges: dict[str, set[str]]) -> tuple[list[str], list[str]]:
+def _topo_sort(
+    nodes: list[str], edges: dict[str, set[str]]
+) -> tuple[list[str], list[str]]:
     """Kahn's algorithm. Returns (sorted_nodes, cycle_warnings).
 
     Tie-breaks alphabetically so output is stable.
@@ -389,21 +407,20 @@ def _topo_sort(nodes: list[str], edges: dict[str, set[str]]) -> tuple[list[str],
             if d in incoming:
                 incoming[d] += 1
 
-    ready = sorted([n for n, c in incoming.items() if c == 0])
+    ready: list[str] = [n for n, c in incoming.items() if c == 0]
+    heapq.heapify(ready)
     out: list[str] = []
     warnings: list[str] = []
 
     while ready:
-        n = ready.pop(0)
+        n = heapq.heappop(ready)
         out.append(n)
         for d in sorted(edges.get(n, set())):
             if d not in incoming:
                 continue
             incoming[d] -= 1
             if incoming[d] == 0:
-                # insert sorted
-                ready.append(d)
-                ready.sort()
+                heapq.heappush(ready, d)
 
     if len(out) != len(nodes):
         leftover = [n for n in nodes if n not in out]
@@ -465,17 +482,19 @@ def analyze(mods: list[ModInfo]) -> AnalysisResult:
             )
             notes.append(
                 f'"{m.display_name}" was bumped from {original} to {pri} '
-                f'so it stays separated from the other mods and continues to load last.'
+                f"so it stays separated from the other mods and continues to load last."
             )
         else:
             reason = f"declared in mod.txt (priority={pri})"
-        recs.append(Recommendation(
-            cfg_key=m.cfg_key,
-            display_name=m.display_name,
-            priority=pri,
-            locked=True,
-            reason=reason,
-        ))
+        recs.append(
+            Recommendation(
+                cfg_key=m.cfg_key,
+                display_name=m.display_name,
+                priority=pri,
+                locked=True,
+                reason=reason,
+            )
+        )
 
     # Assign free-mod priorities in steps of PRIORITY_STEP, skipping any value
     # already used by a locked mod to avoid silent collisions.
@@ -505,13 +524,15 @@ def analyze(mods: list[ModInfo]) -> AnalysisResult:
             reason = f"overrides {', '.join(touched)}"
 
         capped = min(next_value, MAX_PRIORITY)
-        recs.append(Recommendation(
-            cfg_key=key,
-            display_name=m.display_name,
-            priority=capped,
-            locked=False,
-            reason=reason,
-        ))
+        recs.append(
+            Recommendation(
+                cfg_key=key,
+                display_name=m.display_name,
+                priority=capped,
+                locked=False,
+                reason=reason,
+            )
+        )
         assigned[key] = capped
         next_value += PRIORITY_STEP
 

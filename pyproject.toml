@@ -1,7 +1,7 @@
 [project]
 name = "rtv-load-order-editor"
 version = "0.1.0"
-description = "Add your description here"
+description = "Standalone load order editor for Road to Vostok mods"
 requires-python = ">=3.12"
 dependencies = [
     "customtkinter>=5.2.2",

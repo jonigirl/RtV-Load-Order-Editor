@@ -2,14 +2,20 @@
 
 Run this directly to sanity-check the brain before launching the GUI.
 """
+
 from pathlib import Path
 
 from analyzer import analyze
 from config_io import read_config
-from paths import MOD_CONFIG_FILE
+from paths import MOD_CONFIG_FILE, get_mods_folder
 from vmz_scanner import scan_mods_folder
 
-MODS_FOLDER = Path(r"C:\Program Files (x86)\Steam\steamapps\common\Road to Vostok\mods")
+_detected = get_mods_folder()
+MODS_FOLDER = (
+    _detected
+    if _detected
+    else Path(r"C:\Program Files (x86)\Steam\steamapps\common\Road to Vostok\mods")
+)
 
 
 def main() -> None:
@@ -34,7 +40,7 @@ def main() -> None:
         if m.restart_autoloads:
             print(f"    RESTART autoloads: {', '.join(m.restart_autoloads)}")
         if m.uses_mcm:
-            print(f"    references MCM")
+            print("    references MCM")
         print(f"    modworkshop id: {m.modworkshop_id or '(none)'}")
         if m.class_names:
             print(f"    class_name: {', '.join(m.class_names)}")
