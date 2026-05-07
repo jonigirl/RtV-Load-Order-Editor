@@ -22,10 +22,12 @@ from mod_patcher import extract_modworkshop_id, patch_mod_archive
 from paths import (
     MOD_CONFIG_FILE,
     get_mods_folder,
+    get_rtv_pck_path,
     load_manual_locks,
     save_manual_locks,
     verify_mod_config_exists,
 )
+from pck_reader import read_pck_paths
 from vmz_scanner import ModInfo, scan_mods_folder
 
 ctk.set_appearance_mode("dark")
@@ -808,6 +810,7 @@ class App(ctk.CTk):
 
         self.mods_folder: Path | None = None
         self.scanned_mods: list[ModInfo] = []
+        self.vanilla_paths: frozenset[str] | None = None
         self.cfg: ModConfig = ModConfig()
         self.rows: list[ModRow] = []
         self.suggest_disable: set[str] = set()
@@ -1009,6 +1012,10 @@ class App(ctk.CTk):
 
         self.manual_locks = load_manual_locks()
 
+        pck_path = get_rtv_pck_path(self.mods_folder)
+        if pck_path is not None:
+            self.vanilla_paths = read_pck_paths(pck_path)
+
         # Splash appears now (after any folder/config prompts) and drives
         # progress through the scan + initial UI build.
         self._splash = SplashWindow(self)
@@ -1170,7 +1177,7 @@ class App(ctk.CTk):
             messagebox.showwarning("No mods", "Nothing to analyze.")
             return
 
-        result = analyze(self.scanned_mods)
+        result = analyze(self.scanned_mods, vanilla_paths=self.vanilla_paths)
         self._apply_recommendation(result)
 
     def _apply_recommendation(self, result: AnalysisResult):

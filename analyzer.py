@@ -131,12 +131,15 @@ class AnalysisResult:
 
 def _build_constraints(
     mods: list[ModInfo],
+    vanilla_paths: frozenset[str] | None = None,
 ) -> tuple[dict[str, set[str]], list[str], list[str], list[str]]:
     """Return (edges, warnings, notes, suggest_disable).
 
     edges[a] = set of mods that must load AFTER a (i.e. a -> b means a loads before b).
     suggest_disable: cfg keys the user should consider disabling (when a
         conflict has no resolvable load order).
+    vanilla_paths: set of res:// paths from RTV.pck; when provided, mods that
+        extend scripts absent from vanilla emit an outdated-mod warning.
     """
     edges: dict[str, set[str]] = {m.cfg_key: set() for m in mods}
     warnings: list[str] = []
@@ -389,6 +392,27 @@ def _build_constraints(
                 f'Install "Mod Configuration Menu" from ModWorkshop to enable them.'
             )
 
+    # ── Stale extends check ────────────────────────────────────────────
+    # When vanilla_paths is available (parsed from RTV.pck), flag mods that
+    # extend a script path that no longer exists in the current game version.
+    # This is a strong signal that a mod is outdated — Godot will refuse to
+    # load a .gd file whose `extends` target is missing, making the mod
+    # effectively broken at runtime.
+    if vanilla_paths:
+        stale: dict[str, list[str]] = defaultdict(list)  # missing path -> owners
+        for m in mods:
+            for ovr in m.overrides:
+                full_path = f"res://Scripts/{ovr.base_script}.gd"
+                if full_path not in vanilla_paths:
+                    stale[full_path].append(m.cfg_key)
+        for missing_path, owners in sorted(stale.items()):
+            listed = ", ".join(f'"{name_for[o]}"' for o in owners)
+            warnings.append(
+                f"{listed} extend {missing_path!r} which does not exist in this "
+                f"version of Road to Vostok. "
+                f"The mod is likely outdated and will not load correctly in-game."
+            )
+
     return edges, warnings, notes, suggest_disable
 
 
@@ -433,12 +457,15 @@ def _topo_sort(
     return out, warnings
 
 
-def analyze(mods: list[ModInfo]) -> AnalysisResult:
+def analyze(
+    mods: list[ModInfo],
+    vanilla_paths: frozenset[str] | None = None,
+) -> AnalysisResult:
     """Produce a full recommendation set for the given mods."""
     locked: list[ModInfo] = [m for m in mods if m.declared_priority is not None]
     free: list[ModInfo] = [m for m in mods if m.declared_priority is None]
 
-    edges, warnings, notes, suggest_disable = _build_constraints(mods)
+    edges, warnings, notes, suggest_disable = _build_constraints(mods, vanilla_paths)
 
     free_keys = [m.cfg_key for m in free]
     sorted_free, cycle_warnings = _topo_sort(free_keys, edges)

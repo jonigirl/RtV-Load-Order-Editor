@@ -1,4 +1,5 @@
 """Path resolution and persistent app settings."""
+
 from __future__ import annotations
 
 import json
@@ -46,7 +47,7 @@ def _detect_steam_mods_folder() -> Path | None:
     for hive, subkey in [
         (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Valve\Steam"),
         (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Valve\Steam"),
-        (winreg.HKEY_CURRENT_USER,  r"SOFTWARE\Valve\Steam"),
+        (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Valve\Steam"),
     ]:
         try:
             with winreg.OpenKey(hive, subkey) as key:
@@ -115,6 +116,17 @@ def get_mods_folder() -> Path | None:
     settings["mods_folder"] = str(chosen_path)
     save_settings(settings)
     return chosen_path
+
+
+def get_rtv_pck_path(mods_folder: Path) -> Path | None:
+    """Return the path to RTV.pck in the game directory, or None if not found.
+
+    RTV.pck sits one level above the mods folder in the standard Steam layout:
+      steamapps/common/Road to Vostok/RTV.pck
+      steamapps/common/Road to Vostok/mods/
+    """
+    pck = mods_folder.parent / "RTV.pck"
+    return pck if pck.is_file() else None
 
 
 def verify_mod_config_exists() -> bool:
