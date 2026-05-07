@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import ctypes
 import shutil
+import sys
 import tkinter as tk
 from collections import Counter, defaultdict
 from pathlib import Path
 from tkinter import messagebox, ttk
 
 import customtkinter as ctk
-
 from analyzer import (
     MAX_PRIORITY,
     PRIORITY_START,
@@ -24,6 +25,7 @@ from paths import (
     get_mods_folder,
     get_rtv_pck_path,
     load_manual_locks,
+    load_settings,
     save_manual_locks,
     verify_mod_config_exists,
 )
@@ -32,6 +34,32 @@ from vmz_scanner import ModInfo, scan_mods_folder
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
+
+
+# ── Font loading ───────────────────────────────────────────────────────────
+def _assets_fonts_dir() -> Path:
+    meipass = getattr(sys, "_MEIPASS", None)
+    if getattr(sys, "frozen", False) and meipass is not None:
+        return Path(meipass) / "assets" / "fonts"
+    return Path(__file__).resolve().parent / "assets" / "fonts"
+
+
+def _load_bundled_fonts() -> None:
+    fonts_dir = _assets_fonts_dir()
+    for ttf in ("AtkinsonHyperlegible-Regular.ttf", "AtkinsonHyperlegible-Bold.ttf"):
+        path = fonts_dir / ttf
+        if path.exists():
+            ctypes.windll.gdi32.AddFontResourceW(str(path))
+
+
+_load_bundled_fonts()
+
+_settings_cache = load_settings()
+_PREFERRED_FONT = (
+    "Atkinson Hyperlegible"
+    if _settings_cache.get("font_preference", "atkinson") == "atkinson"
+    else "OpenDyslexic"
+)
 
 # ── Color palette ──────────────────────────────────────────────────────────
 COLOR_BG = ("#f5f5f7", "#1a1a1a")
@@ -71,10 +99,10 @@ _LOCK_FG = COLOR_LOCK[1]
 _ENTRY_BG = "#1a1a1a"
 
 # ── Fonts ──────────────────────────────────────────────────────────────────
-FONT_TITLE = ("Segoe UI", 18, "bold")
-FONT_SECTION = ("Segoe UI", 13, "bold")
-FONT_BODY = ("Segoe UI", 12)
-FONT_SMALL = ("Segoe UI", 11)
+FONT_TITLE = (_PREFERRED_FONT, 18, "bold")
+FONT_SECTION = (_PREFERRED_FONT, 13, "bold")
+FONT_BODY = (_PREFERRED_FONT, 12)
+FONT_SMALL = (_PREFERRED_FONT, 11)
 FONT_MONO = ("Consolas", 11)
 
 _INTERACTIVE = (ctk.CTkCheckBox, ctk.CTkButton, ctk.CTkEntry)
@@ -917,6 +945,22 @@ class App(ctk.CTk):
         )
         self.apply_btn.pack(side="left", padx=(4, 0))
 
+        _font_default = (
+            "Atkinson"
+            if _settings_cache.get("font_preference", "atkinson") == "atkinson"
+            else "OpenDyslexic"
+        )
+        self.font_seg = ctk.CTkSegmentedButton(
+            button_block,
+            values=["Atkinson", "OpenDyslexic"],
+            width=200,
+            height=34,
+            font=FONT_SMALL,
+            command=self._on_font_changed,
+        )
+        self.font_seg.set(_font_default)
+        self.font_seg.pack(side="left", padx=(12, 0))
+
         # ── Section header above mod list ────────────────────────────────
         list_header = ctk.CTkFrame(self, fg_color="transparent")
         list_header.pack(fill="x", padx=18, pady=(4, 2))
@@ -1171,6 +1215,15 @@ class App(ctk.CTk):
             if row.cfg_key == cfg_key:
                 row.update_lock_state(locked)
                 break
+
+    def _on_font_changed(self, value: str) -> None:
+        pref = "atkinson" if value == "Atkinson" else "opendyslexic"
+        s = load_settings()
+        s["font_preference"] = pref
+        save_settings(s)
+        messagebox.showinfo(
+            "Font preference saved", "Restart the app to apply the new font."
+        )
 
     def _on_analyze(self):
         if not self.scanned_mods:

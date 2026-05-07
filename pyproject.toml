@@ -1,6 +1,6 @@
 [project]
 name = "rtv-load-order-editor"
-version = "1.2.0"
+version = "1.2.1"
 description = "Standalone load order editor for Road to Vostok mods"
 requires-python = ">=3.12"
 dependencies = [
