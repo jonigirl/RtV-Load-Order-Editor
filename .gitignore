@@ -2,6 +2,10 @@ __pycache__
 .claude
 test_data/
 
+# Build artifacts
+build/
+dist/
+
 # Other
 api-1.yaml
 CLAUDE.md
