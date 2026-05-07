@@ -19,11 +19,11 @@ Three ways to run it, pick whichever suits you:
   [Releases](https://github.com/Dildz/RtV-Load-Order-Editor/releases) page and
   double-click. No Python needed. First launch is a bit slow while the onefile
   bundle unpacks to a temp dir.
-- **From source** — install Python 3.11+ (tick "Add to PATH" or use the MS
-  Store), then from the project folder:
+- **From source** — install Python 3.12+ and [uv](https://docs.astral.sh/uv/),
+  then from the project folder:
   ```
-  pip install -r requirements.txt
-  python main.py
+  uv sync
+  uv run main.py
   ```
 - **Build your own exe** — see [Build](#build) below.
 
@@ -63,8 +63,8 @@ are dropped automatically on load. Click Save to persist the cleaned cfg.
    - The full list of files shipped by each archive (for path-collision
      detection)
 2. **Analyze** — builds a constraint graph from:
-   - **Function chains**: a mod that overrides F *with* `super()` must load
-     AFTER any mod that overrides F *without* `super()`, otherwise the second
+   - **Function chains**: a mod that overrides F _with_ `super()` must load
+     AFTER any mod that overrides F _without_ `super()`, otherwise the second
      mod is silently lost. Takeovers participate in this check too — Godot
      still walks the `extends` chain through a `take_over_path`d script
    - **Takeover ordering**: a mod calling `take_over_path()` on
@@ -112,17 +112,17 @@ overrides of removed/renamed engine scripts may slip through.
 
 ## Files
 
-| File | Purpose |
-|------|---------|
-| `main.py` | Entry point |
-| `gui.py` | customtkinter window |
-| `paths.py` | Settings, AppData paths, mods-folder dialog |
-| `vmz_scanner.py` | Read archives + parse `.gd` overrides |
-| `analyzer.py` | Conflict graph + topological sort |
-| `mod_patcher.py` | Extract ModWorkshop ID + rewrite `.vmz` with patched `mod.txt` |
-| `config_io.py` | `mod_config.cfg` read/write + rolling backups |
-| `_validate.py` | Standalone CLI dump of scan + analyze results |
-| `app_settings.json` | Auto-created on first run |
+| File                | Purpose                                                        |
+| ------------------- | -------------------------------------------------------------- |
+| `main.py`           | Entry point                                                    |
+| `gui.py`            | customtkinter window                                           |
+| `paths.py`          | Settings, AppData paths, mods-folder dialog                    |
+| `vmz_scanner.py`    | Read archives + parse `.gd` overrides                          |
+| `analyzer.py`       | Conflict graph + topological sort                              |
+| `mod_patcher.py`    | Extract ModWorkshop ID + rewrite `.vmz` with patched `mod.txt` |
+| `config_io.py`      | `mod_config.cfg` read/write + rolling backups                  |
+| `_validate.py`      | Standalone CLI dump of scan + analyze results                  |
+| `app_settings.json` | Auto-created on first run                                      |
 
 ## Build
 

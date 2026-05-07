@@ -1,4 +1,5 @@
 """Scan .vmz/.zip mod archives and extract metadata + override info."""
+
 from __future__ import annotations
 
 import re
@@ -9,13 +10,11 @@ from pathlib import Path
 MOD_EXTENSIONS = (".vmz", ".zip")
 
 EXTENDS_RE = re.compile(r'^\s*extends\s+"res://Scripts/([^"]+)\.gd"', re.MULTILINE)
-FUNC_DEF_RE = re.compile(r'^\s*func\s+([A-Za-z_]\w*)\s*\(', re.MULTILINE)
-CLASS_NAME_RE = re.compile(r'^\s*class_name\s+([A-Za-z_]\w*)', re.MULTILINE)
+FUNC_DEF_RE = re.compile(r"^\s*func\s+([A-Za-z_]\w*)\s*\(", re.MULTILINE)
+CLASS_NAME_RE = re.compile(r"^\s*class_name\s+([A-Za-z_]\w*)", re.MULTILINE)
 # take_over_path() with a string literal argument — we can pinpoint the target.
 #   script.take_over_path("res://Scripts/Interface.gd")
-TAKE_OVER_LITERAL_RE = re.compile(
-    r'\btake_over_path\s*\(\s*["\'](res://[^"\']+)["\']'
-)
+TAKE_OVER_LITERAL_RE = re.compile(r'\btake_over_path\s*\(\s*["\'](res://[^"\']+)["\']')
 # take_over_path() using a derived parent/base resource_path — the target is
 # whatever the script extends. We can't resolve the exact target statically,
 # so we treat all of the mod's own `extends` bases as takeover targets.
@@ -23,8 +22,8 @@ TAKE_OVER_LITERAL_RE = re.compile(
 #   script.take_over_path(parent.resource_path)
 #   script.take_over_path(script.get_base_script().resource_path)
 TAKE_OVER_DYNAMIC_PARENT_RE = re.compile(
-    r'\btake_over_path\s*\(\s*[^)]*'
-    r'(?:(?:parent|base)\w*\.resource_path|get_base_script\s*\(\s*\)\.resource_path)',
+    r"\btake_over_path\s*\(\s*[^)]*"
+    r"(?:(?:parent|base)\w*\.resource_path|get_base_script\s*\(\s*\)\.resource_path)",
     re.IGNORECASE,
 )
 # take_over_path() on a variable whose name contains "script" — still a script
@@ -32,12 +31,10 @@ TAKE_OVER_DYNAMIC_PARENT_RE = re.compile(
 # "helper function wraps the call with a passed-in vanilla_path" idiom.
 #   script.take_over_path(vanilla_path)
 #   compat_script.take_over_path(some_path)
-TAKE_OVER_SCRIPT_CALLEE_RE = re.compile(
-    r'\b\w*[Ss]cript\w*\s*\.\s*take_over_path\s*\('
-)
-MCM_REF_RE = re.compile(r'res://ModConfigurationMenu/')
-SECTION_RE = re.compile(r'^\s*\[([^\]]+)\]\s*$')
-KV_RE = re.compile(r'^\s*([^=\s]+)\s*=\s*(.*)$')
+TAKE_OVER_SCRIPT_CALLEE_RE = re.compile(r"\b\w*[Ss]cript\w*\s*\.\s*take_over_path\s*\(")
+MCM_REF_RE = re.compile(r"res://ModConfigurationMenu/")
+SECTION_RE = re.compile(r"^\s*\[([^\]]+)\]\s*$")
+KV_RE = re.compile(r"^\s*([^=\s]+)\s*=\s*(.*)$")
 
 # Archive-internal paths we don't treat as "real" conflict surface. The
 # .godot/ tree is engine-generated import cache — every mod has its own
@@ -65,20 +62,28 @@ class ScriptOverride:
 
 @dataclass
 class ModInfo:
-    filename: str                  # e.g. "HoldBreath.vmz"
-    display_name: str              # from mod.txt name=, fallback to filename
+    filename: str  # e.g. "HoldBreath.vmz"
+    display_name: str  # from mod.txt name=, fallback to filename
     declared_priority: int | None  # from mod.txt priority=, None if absent
     mod_id: str | None = None
     mod_version: str | None = None  # from mod.txt [mod] version=
-    autoloads: dict[str, str] = field(default_factory=dict)   # name -> res:// path
-    restart_autoloads: list[str] = field(default_factory=list)  # autoload names with '!' prefix
-    file_paths: list[str] = field(default_factory=list)        # res:// paths shipped by archive
-    uses_mcm: bool = False          # references res://ModConfigurationMenu/ in any script
-    modworkshop_id: str | None = None  # from [updates] modworkshop=<id>, None if section/key absent
+    autoloads: dict[str, str] = field(default_factory=dict)  # name -> res:// path
+    restart_autoloads: list[str] = field(
+        default_factory=list
+    )  # autoload names with '!' prefix
+    file_paths: list[str] = field(
+        default_factory=list
+    )  # res:// paths shipped by archive
+    uses_mcm: bool = False  # references res://ModConfigurationMenu/ in any script
+    modworkshop_id: str | None = (
+        None  # from [updates] modworkshop=<id>, None if section/key absent
+    )
     overrides: list[ScriptOverride] = field(default_factory=list)
     parse_errors: list[str] = field(default_factory=list)
-    class_names: list[str] = field(default_factory=list)           # `class_name X` declarations
-    takeover_targets: set[str] = field(default_factory=set)        # base script names (e.g. "Character") this mod replaces
+    class_names: list[str] = field(default_factory=list)  # `class_name X` declarations
+    takeover_targets: set[str] = field(
+        default_factory=set
+    )  # base script names (e.g. "Character") this mod replaces
 
     @property
     def cfg_key(self) -> str:
@@ -124,11 +129,47 @@ def _has_super_call(body: str, func_name: str) -> bool:
       super(args)            — bare, calls same-named parent
       super.FuncName(args)   — explicit
     """
-    if re.search(r'\bsuper\s*\(', body):
+    if re.search(r"\bsuper\s*\(", body):
         return True
-    if re.search(rf'\bsuper\s*\.\s*{re.escape(func_name)}\s*\(', body):
+    if re.search(rf"\bsuper\s*\.\s*{re.escape(func_name)}\s*\(", body):
         return True
     return False
+
+
+def _strip_gd_comments(source: str) -> str:
+    """Return source with GDScript line comments removed.
+
+    Only strips # characters that are outside string literals so that
+    values like `path = "res://# not a comment"` are preserved.
+    Line endings are kept so line-based regex patterns remain valid.
+    """
+    result: list[str] = []
+    for line in source.splitlines(keepends=True):
+        content = line.rstrip("\r\n")
+        ending = line[len(content) :]
+        out: list[str] = []
+        in_string: str | None = None
+        i = 0
+        while i < len(content):
+            ch = content[i]
+            if in_string:
+                out.append(ch)
+                if ch == "\\":
+                    i += 1
+                    if i < len(content):
+                        out.append(content[i])
+                elif ch == in_string:
+                    in_string = None
+            elif ch in ('"', "'"):
+                in_string = ch
+                out.append(ch)
+            elif ch == "#":
+                break
+            else:
+                out.append(ch)
+            i += 1
+        result.append("".join(out) + ending)
+    return "".join(result)
 
 
 def _parse_gd_file(source: str) -> ScriptOverride | None:
@@ -140,7 +181,9 @@ def _parse_gd_file(source: str) -> ScriptOverride | None:
     base = extends_match.group(1)  # e.g. "Character"
     funcs: list[FunctionOverride] = []
     for fname, body in _split_function_bodies(source):
-        funcs.append(FunctionOverride(name=fname, calls_super=_has_super_call(body, fname)))
+        funcs.append(
+            FunctionOverride(name=fname, calls_super=_has_super_call(body, fname))
+        )
 
     return ScriptOverride(base_script=base, functions=funcs)
 
@@ -176,9 +219,9 @@ def _parse_mod_txt(text: str) -> dict[str, dict[str, str]]:
     return sections
 
 
-def _extract_mod_meta(sections: dict[str, dict[str, str]]) -> tuple[
-    str | None, int | None, str | None, str | None
-]:
+def _extract_mod_meta(
+    sections: dict[str, dict[str, str]],
+) -> tuple[str | None, int | None, str | None, str | None]:
     """Pull (display_name, declared_priority, mod_id, version) from parsed mod.txt.
 
     A declared priority of 0 is treated as unset — many mod authors include
@@ -245,7 +288,9 @@ def scan_archive(path: Path) -> ModInfo:
             names = zf.namelist()
 
             # mod.txt — find it anywhere in the archive (usually at root or one level deep)
-            mod_txt_name = next((n for n in names if n.lower().endswith("mod.txt")), None)
+            mod_txt_name = next(
+                (n for n in names if n.lower().endswith("mod.txt")), None
+            )
             if mod_txt_name:
                 try:
                     text = zf.read(mod_txt_name).decode("utf-8", errors="replace")
@@ -256,7 +301,9 @@ def scan_archive(path: Path) -> ModInfo:
                     info.declared_priority = pri
                     info.mod_id = mod_id
                     info.mod_version = version
-                    info.autoloads, info.restart_autoloads = _extract_autoloads(sections)
+                    info.autoloads, info.restart_autoloads = _extract_autoloads(
+                        sections
+                    )
                     info.modworkshop_id = _extract_updates_id(sections)
                 except Exception as e:
                     info.parse_errors.append(f"mod.txt: {e}")
@@ -276,14 +323,15 @@ def scan_archive(path: Path) -> ModInfo:
                 info.file_paths.append(_archive_to_res_path(n))
 
             # .gd files — scan each for overrides + MCM refs + take_over_path + class_name
-            literal_targets: set[str] = set()         # exact Scripts/X base names
-            script_takeover_detected = False          # any script-targeted take_over_path
+            literal_targets: set[str] = set()  # exact Scripts/X base names
+            script_takeover_detected = False  # any script-targeted take_over_path
             class_names: set[str] = set()
             for n in names:
                 if not n.lower().endswith(".gd"):
                     continue
                 try:
                     src = zf.read(n).decode("utf-8", errors="replace")
+                    src = _strip_gd_comments(src)
                     override = _parse_gd_file(src)
                     if override:
                         info.overrides.append(override)
@@ -291,8 +339,12 @@ def scan_archive(path: Path) -> ModInfo:
                         info.uses_mcm = True
                     for lm in TAKE_OVER_LITERAL_RE.finditer(src):
                         target = lm.group(1)
-                        if target.startswith("res://Scripts/") and target.endswith(".gd"):
-                            literal_targets.add(target[len("res://Scripts/"):-len(".gd")])
+                        if target.startswith("res://Scripts/") and target.endswith(
+                            ".gd"
+                        ):
+                            literal_targets.add(
+                                target[len("res://Scripts/") : -len(".gd")]
+                            )
                     if not script_takeover_detected and (
                         TAKE_OVER_DYNAMIC_PARENT_RE.search(src)
                         or TAKE_OVER_SCRIPT_CALLEE_RE.search(src)
