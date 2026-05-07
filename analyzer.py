@@ -399,18 +399,20 @@ def _build_constraints(
     # load a .gd file whose `extends` target is missing, making the mod
     # effectively broken at runtime.
     if vanilla_paths:
-        stale: dict[str, list[str]] = defaultdict(list)  # missing path -> owners
+        stale: dict[str, set[str]] = defaultdict(set)  # missing path -> owner cfg_keys
         for m in mods:
             for ovr in m.overrides:
                 full_path = f"res://Scripts/{ovr.base_script}.gd"
                 if full_path not in vanilla_paths:
-                    stale[full_path].append(m.cfg_key)
+                    stale[full_path].add(m.cfg_key)
         for missing_path, owners in sorted(stale.items()):
-            listed = ", ".join(f'"{name_for[o]}"' for o in owners)
+            sorted_owners = sorted(owners)
+            listed = ", ".join(f'"{name_for[o]}"' for o in sorted_owners)
+            mod_noun = "The mod is" if len(owners) == 1 else "These mods are"
             warnings.append(
                 f"{listed} extend {missing_path!r} which does not exist in this "
                 f"version of Road to Vostok. "
-                f"The mod is likely outdated and will not load correctly in-game."
+                f"{mod_noun} likely outdated and will not load correctly in-game."
             )
 
     return edges, warnings, notes, suggest_disable

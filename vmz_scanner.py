@@ -324,7 +324,12 @@ def scan_archive(path: Path) -> ModInfo:
 
             # .gd files — scan each for overrides + MCM refs + take_over_path + class_name
             literal_targets: set[str] = set()  # exact Scripts/X base names
-            script_takeover_detected = False  # any script-targeted take_over_path
+            dynamic_self_bases: set[str] = (
+                set()
+            )  # per-file: script takes over its own parent
+            bootstrap_takeover = (
+                False  # loader script iterates mod scripts and takes over each
+            )
             class_names: set[str] = set()
             for n in names:
                 if not n.lower().endswith(".gd"):
@@ -345,11 +350,12 @@ def scan_archive(path: Path) -> ModInfo:
                             literal_targets.add(
                                 target[len("res://Scripts/") : -len(".gd")]
                             )
-                    if not script_takeover_detected and (
-                        TAKE_OVER_DYNAMIC_PARENT_RE.search(src)
-                        or TAKE_OVER_SCRIPT_CALLEE_RE.search(src)
+                    if override and TAKE_OVER_DYNAMIC_PARENT_RE.search(src):
+                        dynamic_self_bases.add(override.base_script)
+                    if not bootstrap_takeover and TAKE_OVER_SCRIPT_CALLEE_RE.search(
+                        src
                     ):
-                        script_takeover_detected = True
+                        bootstrap_takeover = True
                     for cm in CLASS_NAME_RE.finditer(src):
                         class_names.add(cm.group(1))
                 except Exception as e:
@@ -358,15 +364,13 @@ def scan_archive(path: Path) -> ModInfo:
             info.class_names = sorted(class_names)
 
             # Build the exact set of base scripts this mod takes over:
-            #   - Literal "res://Scripts/X.gd" args → X is pinpoint-targeted.
-            #   - Any script-targeted take_over_path with a dynamic arg →
-            #     can't pinpoint; assume every base this mod extends is a
-            #     target (matches the common Main.gd bootstrap idiom that
-            #     iterates over the mod's extending scripts).
-            # Non-script take_over_path calls (e.g. icon.take_over_path on a
-            # texture path) no longer false-positive.
-            info.takeover_targets = set(literal_targets)
-            if script_takeover_detected:
+            #   - Literal "res://Scripts/X.gd" args → exact target.
+            #   - Self-takeover pattern (take_over_path on own base script path) →
+            #     only the extending file's base is targeted.
+            #   - Bootstrap-iterate pattern (loader iterates mod scripts, calling
+            #     take_over_path on each) → attribute to all of this mod's extends bases.
+            info.takeover_targets = literal_targets | dynamic_self_bases
+            if bootstrap_takeover:
                 info.takeover_targets.update(ovr.base_script for ovr in info.overrides)
             for ovr in info.overrides:
                 ovr.takes_over_base = ovr.base_script in info.takeover_targets
